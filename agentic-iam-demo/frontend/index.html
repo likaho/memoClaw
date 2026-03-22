@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Agentic IAM Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .allow { color: #16a34a; font-weight: 700; }
+    .deny  { color: #dc2626; font-weight: 700; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-mono min-h-screen p-6">
+
+<div class="max-w-4xl mx-auto space-y-8">
+
+  <div>
+    <h1 class="text-2xl font-bold text-white">Agentic IAM — Live Demo</h1>
+    <p class="text-gray-400 text-sm mt-1">Follow steps 1 → 4 to see the full flow</p>
+  </div>
+
+  <!-- STEP 1: Create Agent -->
+  <section class="bg-gray-900 rounded-xl p-5 border border-gray-700">
+    <h2 class="text-lg font-semibold text-indigo-400 mb-3">Step 1 — Register an Agent</h2>
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div>
+        <label class="text-xs text-gray-400">Agent Name</label>
+        <input id="agentName" value="ticket-buyer" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm mt-1"/>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Owner (human user)</label>
+        <select id="agentOwner" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm mt-1">
+          <option value="alice">alice (can: buy:ticket, read:repo, create:issue)</option>
+          <option value="bob">bob (can: read:repo, create:issue)</option>
+          <option value="carol">carol (can: buy:ticket)</option>
+        </select>
+      </div>
+    </div>
+    <button onclick="createAgent()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-semibold">Register Agent</button>
+    <pre id="agentResult" class="mt-3 text-xs text-green-400 hidden"></pre>
+  </section>
+
+  <!-- STEP 2: Delegate -->
+  <section class="bg-gray-900 rounded-xl p-5 border border-gray-700">
+    <h2 class="text-lg font-semibold text-indigo-400 mb-3">Step 2 — Issue Delegated Token</h2>
+    <p class="text-xs text-gray-400 mb-3">Issues a token with <code class="text-yellow-400">sub</code> (owner) + <code class="text-yellow-400">act</code> (agent) claims — RFC 8693 on-behalf-of pattern</p>
+    <div class="mb-3">
+      <label class="text-xs text-gray-400">Requested Scopes (comma separated)</label>
+      <input id="delegateScopes" value="buy:ticket,read:repo" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm mt-1"/>
+    </div>
+    <button onclick="delegate()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-semibold">Issue Token</button>
+    <pre id="delegateResult" class="mt-3 text-xs text-green-400 hidden"></pre>
+  </section>
+
+  <!-- STEP 3: Perform Action -->
+  <section class="bg-gray-900 rounded-xl p-5 border border-gray-700">
+    <h2 class="text-lg font-semibold text-indigo-400 mb-3">Step 3 — Agent Requests Action</h2>
+    <p class="text-xs text-gray-400 mb-3">Trust engine evaluates against owner's entitlements (owner ceiling policy)</p>
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div>
+        <label class="text-xs text-gray-400">Action</label>
+        <select id="actionType" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm mt-1">
+          <option value="buy:ticket">buy:ticket ✅ (allowed for alice/carol)</option>
+          <option value="delete:repo">delete:repo 🚨 (high-risk — CIBA escalation)</option>
+          <option value="transfer:funds">transfer:funds 🚨 (high-risk — CIBA escalation)</option>
+          <option value="deploy:production">deploy:production 🚨 (high-risk — CIBA escalation)</option>
+          <option value="read:repo">read:repo ✅ (allowed for alice/bob)</option>
+          <option value="admin:org">admin:org ❌ (no one has this)</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs text-gray-400">Resource</label>
+        <input id="actionResource" value="flight/NYC-LON-2026" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm mt-1"/>
+      </div>
+    </div>
+    <button onclick="performAction()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-semibold">Request Action</button>
+
+    <div id="actionResult" class="mt-4 hidden">
+      <div id="decisionBadge" class="text-2xl font-bold mb-2"></div>
+      <p id="decisionReason" class="text-sm text-gray-300 mb-3"></p>
+      <details class="text-xs">
+        <summary class="text-gray-400 cursor-pointer">Token claims (JWT payload)</summary>
+        <pre id="tokenClaims" class="mt-2 text-yellow-300 bg-gray-800 p-3 rounded"></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- STEP 4: Audit Log -->
+  <section class="bg-gray-900 rounded-xl p-5 border border-gray-700">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-semibold text-indigo-400">Step 4 — Audit Log</h2>
+      <button onclick="loadAudit()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs">Refresh</button>
+    </div>
+    <div id="auditLog" class="space-y-2 text-xs"></div>
+  </section>
+
+  <!-- De-provision -->
+  <section class="bg-gray-900 rounded-xl p-5 border border-red-900">
+    <h2 class="text-lg font-semibold text-red-400 mb-2">Bonus — De-provision Agent</h2>
+    <p class="text-xs text-gray-400 mb-3">Permanently removes agent identity + revokes all tokens (SCIM DELETE pattern)</p>
+    <button onclick="deprovision()" class="bg-red-700 hover:bg-red-600 px-4 py-2 rounded text-sm font-semibold">De-provision Agent</button>
+    <pre id="deprovisionResult" class="mt-3 text-xs text-red-300 hidden"></pre>
+  </section>
+
+</div>
+
+<script>
+  const API = "http://localhost:8000";
+  let currentAgentId = null;
+  let currentTokenId = null;
+
+  async function api(method, path, body) {
+    const res = await fetch(API + path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Request failed");
+    }
+    return res.json();
+  }
+
+  function show(id, data, color = "text-green-400") {
+    const el = document.getElementById(id);
+    el.className = `mt-3 text-xs ${color}`;
+    el.textContent = JSON.stringify(data, null, 2);
+    el.classList.remove("hidden");
+  }
+
+  async function createAgent() {
+    try {
+      const name = document.getElementById("agentName").value;
+      const owner = document.getElementById("agentOwner").value;
+      const data = await api("POST", "/agents", { name, owner });
+      currentAgentId = data.agent_id;
+      show("agentResult", data);
+      loadAudit();
+    } catch(e) { alert(e.message); }
+  }
+
+  async function delegate() {
+    if (!currentAgentId) return alert("Register an agent first (Step 1)");
+    try {
+      const scopes = document.getElementById("delegateScopes").value
+        .split(",").map(s => s.trim()).filter(Boolean);
+      const data = await api("POST", "/delegate", { agent_id: currentAgentId, scopes });
+      currentTokenId = data.token_id;
+      show("delegateResult", data);
+      loadAudit();
+    } catch(e) { alert(e.message); }
+  }
+
+  async function performAction() {
+    if (!currentTokenId) return alert("Issue a delegation token first (Step 2)");
+    try {
+      const action = document.getElementById("actionType").value;
+      const resource = document.getElementById("actionResource").value;
+      const data = await api("POST", "/action", { token_id: currentTokenId, action, resource });
+
+      const resultDiv = document.getElementById("actionResult");
+      const badge = document.getElementById("decisionBadge");
+      const reason = document.getElementById("decisionReason");
+      const claims = document.getElementById("tokenClaims");
+
+      badge.textContent = data.decision === "ALLOW" ? "✅ ALLOW" : "🚫 DENY";
+      badge.className = data.decision === "ALLOW" ? "text-2xl font-bold mb-2 text-green-400" : "text-2xl font-bold mb-2 text-red-400";
+      reason.textContent = data.reason;
+      claims.textContent = JSON.stringify(data.token_claims, null, 2);
+      resultDiv.classList.remove("hidden");
+      loadAudit();
+    } catch(e) { alert(e.message); }
+  }
+
+  async function loadAudit() {
+    try {
+      const entries = await api("GET", "/audit");
+      const container = document.getElementById("auditLog");
+      if (!entries.length) {
+        container.innerHTML = '<p class="text-gray-500">No entries yet.</p>';
+        return;
+      }
+      container.innerHTML = entries.map(e => `
+        <div class="bg-gray-800 rounded p-3 border-l-4 ${e.decision === 'ALLOW' ? 'border-green-500' : 'border-red-500'}">
+          <div class="flex justify-between items-start">
+            <span class="${e.decision === 'ALLOW' ? 'text-green-400' : 'text-red-400'} font-bold">${e.decision}</span>
+            <span class="text-gray-500">${e.timestamp}</span>
+          </div>
+          <div class="mt-1 text-gray-300">
+            <span class="text-yellow-400">action:</span> ${e.action} &nbsp;
+            <span class="text-yellow-400">resource:</span> ${e.resource}
+          </div>
+          <div class="text-gray-400 mt-1">
+            <span class="text-blue-400">sub:</span> ${e.owner} &nbsp;
+            <span class="text-purple-400">act:</span> ${e.agent_id}
+          </div>
+          <div class="text-gray-500 mt-1 italic">${e.reason}</div>
+        </div>
+      `).join("");
+    } catch(e) { console.error(e); }
+  }
+
+  async function deprovision() {
+    if (!currentAgentId) return alert("No agent registered yet");
+    if (!confirm(`De-provision ${currentAgentId}? This is permanent.`)) return;
+    try {
+      const data = await api("DELETE", `/agents/${currentAgentId}`);
+      currentAgentId = null;
+      currentTokenId = null;
+      show("deprovisionResult", data, "text-red-300");
+      loadAudit();
+    } catch(e) { alert(e.message); }
+  }
+
+  // Load audit on page open
+  loadAudit();
+</script>
+</body>
+</html>
